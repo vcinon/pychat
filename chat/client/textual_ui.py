@@ -248,78 +248,61 @@ class ChatContainer(Container):
 
         yield self.commands_panel
 
-    def on_mount(self) -> None:
-        """Set up reactive bindings."""
-        if not self.message_display or not self.commands_panel or not self.input_prompt:
-            return
-
-        self.watch(self.messages, self._on_messages_changed)
-        self.watch(self.command_panel_visible, self._on_command_panel_visibility_changed)
-        self.watch(self.input_buffer, self._on_input_buffer_changed)
-        self.watch(self.message_scroll, self._on_message_scroll_changed)
-        self.watch(self.typing, self._on_typing_changed)
-        self.watch(self.executing_command, self._on_executing_command_changed)
-        self.watch(self.frame, self._on_frame_changed)
-        self.watch(self.friend, self._on_friend_changed)
-        self.watch(self.friend_status, self._on_friend_status_changed)
-        self.watch(self.online, self._on_online_changed)
-        self.watch(self.ping_ms, self._on_ping_ms_changed)
-
-    def _on_messages_changed(self) -> None:
-        """Sync messages to message display."""
+    def watch_messages(self, new_value: list[tuple[str, str, str]]) -> None:
+        """Watch messages reactive attribute."""
         if self.message_display:
-            self.message_display.messages = self.messages
+            self.message_display.messages = new_value
 
-    def _on_command_panel_visibility_changed(self) -> None:
-        """Sync command panel visibility."""
+    def watch_command_panel_visible(self, new_value: bool) -> None:
+        """Watch command panel visibility."""
         if self.commands_panel:
-            self.commands_panel.display = self.command_panel_visible
-        self.post_message(self.CommandsVisibilityChanged(self.command_panel_visible))
+            self.commands_panel.display = new_value
+        self.post_message(self.CommandsVisibilityChanged(new_value))
 
-    def _on_input_buffer_changed(self) -> None:
-        """Sync input buffer."""
+    def watch_input_buffer(self, new_value: str) -> None:
+        """Watch input buffer."""
         if self.input_prompt:
-            self.input_prompt.input_buffer = self.input_buffer
+            self.input_prompt.input_buffer = new_value
 
-    def _on_message_scroll_changed(self) -> None:
-        """Sync message scroll."""
+    def watch_message_scroll(self, new_value: int) -> None:
+        """Watch message scroll."""
         if self.message_display:
-            self.message_display.message_scroll = self.message_scroll
+            self.message_display.message_scroll = new_value
 
-    def _on_typing_changed(self) -> None:
-        """Sync typing indicator."""
+    def watch_typing(self, new_value: bool) -> None:
+        """Watch typing indicator."""
         if self.message_display:
-            self.message_display.typing = self.typing
+            self.message_display.typing = new_value
 
-    def _on_executing_command_changed(self) -> None:
-        """Sync command execution spinner."""
+    def watch_executing_command(self, new_value: str | None) -> None:
+        """Watch command execution spinner."""
         if self.message_display:
-            self.message_display.executing_command = self.executing_command
+            self.message_display.executing_command = new_value
 
-    def _on_frame_changed(self) -> None:
-        """Sync frame for animations."""
+    def watch_frame(self, new_value: int) -> None:
+        """Watch frame for animations."""
         if self.message_display:
-            self.message_display.frame = self.frame
+            self.message_display.frame = new_value
 
-    def _on_friend_changed(self) -> None:
-        """Sync friend name."""
+    def watch_friend(self, new_value: str) -> None:
+        """Watch friend name."""
         if self.message_display:
-            self.message_display.friend = self.friend
+            self.message_display.friend = new_value
 
-    def _on_friend_status_changed(self) -> None:
-        """Sync friend status."""
+    def watch_friend_status(self, new_value: str) -> None:
+        """Watch friend status."""
         if self.message_display:
-            self.message_display.friend_status = self.friend_status
+            self.message_display.friend_status = new_value
 
-    def _on_online_changed(self) -> None:
-        """Sync online status."""
+    def watch_online(self, new_value: bool) -> None:
+        """Watch online status."""
         if self.message_display:
-            self.message_display.online = self.online
+            self.message_display.online = new_value
 
-    def _on_ping_ms_changed(self) -> None:
-        """Sync ping latency."""
+    def watch_ping_ms(self, new_value: int | None) -> None:
+        """Watch ping latency."""
         if self.message_display:
-            self.message_display.ping_ms = self.ping_ms
+            self.message_display.ping_ms = new_value
 
     def set_command_help(self, commands: list[tuple[str, str]]) -> None:
         """Set the command help items."""
