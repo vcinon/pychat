@@ -10,7 +10,7 @@ from rich.text import Text
 from rich.panel import Panel
 from rich.table import Table
 from textual.app import App, ComposeResult
-from textual.containers import Container, Vertical
+from textual.containers import Container, Vertical, Horizontal
 from textual.widgets import Header, Footer, Static
 from textual.binding import Binding
 from textual.reactive import reactive
@@ -242,11 +242,11 @@ class ChatContainer(Container):
         self.commands_panel = CommandsPanel(id="commands-panel")
         self.input_prompt = InputPrompt(id="input-prompt")
 
-        with Vertical(id="chat-main"):
-            yield self.message_display
-            yield self.input_prompt
-
-        yield self.commands_panel
+        with Horizontal(id="chat-main"):
+            with Vertical(id="chat-left"):
+                yield self.message_display
+                yield self.input_prompt
+            yield self.commands_panel
 
     def watch_messages(self, new_value: list[tuple[str, str, str]]) -> None:
         """Watch messages reactive attribute."""
@@ -342,19 +342,41 @@ class ChatUI(App):
     CSS = """
     Screen {
         layout: vertical;
-        background: $surface;
+        background: $panel;
         color: $text;
+    }
+
+    Header {
+        dock: top;
+        height: 1;
+    }
+
+    Footer {
+        dock: bottom;
+        height: 1;
+    }
+
+    #chat-container {
+        height: 1fr;
+        width: 1fr;
     }
 
     #chat-main {
         height: 1fr;
         width: 1fr;
-        border: solid $accent;
+        layout: horizontal;
+    }
+
+    #chat-left {
+        height: 1fr;
+        width: 1fr;
+        layout: vertical;
     }
 
     #message-display {
         height: 1fr;
         width: 1fr;
+        border: solid $accent;
     }
 
     #input-prompt {
@@ -368,22 +390,10 @@ class ChatUI(App):
         border: solid $accent;
         display: block;
     }
-
-    #chat-container {
-        height: 1fr;
-        width: 1fr;
-    }
-
-    Vertical {
-        height: 1fr;
-        width: 1fr;
-    }
-
-    Horizontal {
-        height: 1fr;
-        width: 1fr;
-    }
     """
+
+    # Disable the built-in command palette
+    ENABLE_COMMAND_PALETTE = False
 
     BINDINGS = [
         Binding("ctrl+c", "quit", "Quit", show=False),
@@ -423,6 +433,10 @@ class ChatUI(App):
         """Update animation state."""
         if self.chat_container:
             self.chat_container.tick()
+
+    def action_quit(self) -> None:
+        """Exit the app."""
+        self.exit()
 
     def action_scroll_up(self) -> None:
         """Scroll up (PageUp)."""
