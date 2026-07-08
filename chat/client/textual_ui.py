@@ -232,6 +232,9 @@ class ChatContainer(Container):
     def __init__(self, username: str, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.username = username
+        self.message_display: MessageDisplay | None = None
+        self.commands_panel: CommandsPanel | None = None
+        self.input_prompt: InputPrompt | None = None
 
     def compose(self) -> ComposeResult:
         """Compose the chat layout."""
@@ -247,6 +250,9 @@ class ChatContainer(Container):
 
     def on_mount(self) -> None:
         """Set up reactive bindings."""
+        if not self.message_display or not self.commands_panel or not self.input_prompt:
+            return
+
         self.watch(self.messages, self._on_messages_changed)
         self.watch(self.command_panel_visible, self._on_command_panel_visibility_changed)
         self.watch(self.input_buffer, self._on_input_buffer_changed)
@@ -261,73 +267,90 @@ class ChatContainer(Container):
 
     def _on_messages_changed(self) -> None:
         """Sync messages to message display."""
-        self.message_display.messages = self.messages
+        if self.message_display:
+            self.message_display.messages = self.messages
 
     def _on_command_panel_visibility_changed(self) -> None:
         """Sync command panel visibility."""
-        self.commands_panel.display = self.command_panel_visible
+        if self.commands_panel:
+            self.commands_panel.display = self.command_panel_visible
         self.post_message(self.CommandsVisibilityChanged(self.command_panel_visible))
 
     def _on_input_buffer_changed(self) -> None:
         """Sync input buffer."""
-        self.input_prompt.input_buffer = self.input_buffer
+        if self.input_prompt:
+            self.input_prompt.input_buffer = self.input_buffer
 
     def _on_message_scroll_changed(self) -> None:
         """Sync message scroll."""
-        self.message_display.message_scroll = self.message_scroll
+        if self.message_display:
+            self.message_display.message_scroll = self.message_scroll
 
     def _on_typing_changed(self) -> None:
         """Sync typing indicator."""
-        self.message_display.typing = self.typing
+        if self.message_display:
+            self.message_display.typing = self.typing
 
     def _on_executing_command_changed(self) -> None:
         """Sync command execution spinner."""
-        self.message_display.executing_command = self.executing_command
+        if self.message_display:
+            self.message_display.executing_command = self.executing_command
 
     def _on_frame_changed(self) -> None:
         """Sync frame for animations."""
-        self.message_display.frame = self.frame
+        if self.message_display:
+            self.message_display.frame = self.frame
 
     def _on_friend_changed(self) -> None:
         """Sync friend name."""
-        self.message_display.friend = self.friend
+        if self.message_display:
+            self.message_display.friend = self.friend
 
     def _on_friend_status_changed(self) -> None:
         """Sync friend status."""
-        self.message_display.friend_status = self.friend_status
+        if self.message_display:
+            self.message_display.friend_status = self.friend_status
 
     def _on_online_changed(self) -> None:
         """Sync online status."""
-        self.message_display.online = self.online
+        if self.message_display:
+            self.message_display.online = self.online
 
     def _on_ping_ms_changed(self) -> None:
         """Sync ping latency."""
-        self.message_display.ping_ms = self.ping_ms
+        if self.message_display:
+            self.message_display.ping_ms = self.ping_ms
 
     def set_command_help(self, commands: list[tuple[str, str]]) -> None:
         """Set the command help items."""
-        self.commands_panel.set_command_help(commands)
+        if self.commands_panel:
+            self.commands_panel.set_command_help(commands)
 
     def add_message(self, sender: str, text: str, status: str = "") -> None:
         """Add a message."""
         self.messages = [*self.messages, (sender, text, status)]
-        self.message_display.add_message(sender, text, status)
-        self.message_scroll = min(self.message_scroll, self.message_display.max_scroll)
+        if self.message_display:
+            self.message_display.add_message(sender, text, status)
+        self.message_scroll = min(self.message_scroll, self.max_scroll)
 
     def scroll_messages(self, lines: int) -> None:
         """Scroll messages."""
-        self.message_display.scroll_messages(lines)
-        self.message_scroll = self.message_display.message_scroll
+        if self.message_display:
+            self.message_display.scroll_messages(lines)
+            self.message_scroll = self.message_display.message_scroll
 
     def tick(self) -> None:
         """Update animation frame."""
         self.frame = (self.frame + 1) % 1_000_000
-        self.message_display.tick()
+        if self.message_display:
+            self.message_display.tick()
 
     @property
     def max_scroll(self) -> int:
         """Maximum scroll offset."""
-        return self.message_display.max_scroll
+        if self.message_display:
+            return self.message_display.max_scroll
+        return 0
 
 
 class ChatUI(App):
@@ -393,6 +416,9 @@ class ChatUI(App):
         self.input_history: list[str] = []
         self.history_index: int | None = None
         self.client_callback: Any = None
+        self.chat_container: ChatContainer | None = None
+        # Pre-store command help
+        self._pending_command_help: list[tuple[str, str]] = []
 
     def compose(self) -> ComposeResult:
         """Compose the app layout."""
@@ -404,28 +430,36 @@ class ChatUI(App):
     def on_mount(self) -> None:
         """Set up the app."""
         self.title = "Private Chat"
+        # Apply any pending command help
+        if self._pending_command_help:
+            self.set_command_help(self._pending_command_help)
         # Start the animation loop
         self.set_interval(0.08, self._tick_animation)
 
     def _tick_animation(self) -> None:
         """Update animation state."""
-        self.chat_container.tick()
+        if self.chat_container:
+            self.chat_container.tick()
 
     def action_scroll_up(self) -> None:
         """Scroll up (PageUp)."""
-        self.chat_container.scroll_messages(5)
+        if self.chat_container:
+            self.chat_container.scroll_messages(5)
 
     def action_scroll_down(self) -> None:
         """Scroll down (PageDown)."""
-        self.chat_container.scroll_messages(-5)
+        if self.chat_container:
+            self.chat_container.scroll_messages(-5)
 
     def action_scroll_home(self) -> None:
         """Scroll to home (Home key)."""
-        self.chat_container.scroll_messages(self.chat_container.max_scroll)
+        if self.chat_container:
+            self.chat_container.scroll_messages(self.chat_container.max_scroll)
 
     def action_scroll_end(self) -> None:
         """Scroll to end (End key)."""
-        self.chat_container.scroll_messages(-self.chat_container.max_scroll)
+        if self.chat_container:
+            self.chat_container.scroll_messages(-self.chat_container.max_scroll)
 
     def on_key(self, event: Key) -> None:
         """Handle keyboard input."""
@@ -460,133 +494,173 @@ class ChatUI(App):
     @property
     def messages(self) -> list[tuple[str, str, str]]:
         """Get messages."""
-        return self.chat_container.messages
+        if self.chat_container:
+            return self.chat_container.messages
+        return []
 
     @messages.setter
     def messages(self, value: list[tuple[str, str, str]]) -> None:
         """Set messages."""
-        self.chat_container.messages = value
+        if self.chat_container:
+            self.chat_container.messages = value
 
     @property
     def friend(self) -> str:
         """Get friend name."""
-        return self.chat_container.friend
+        if self.chat_container:
+            return self.chat_container.friend
+        return "Friend"
 
     @friend.setter
     def friend(self, value: str) -> None:
         """Set friend name."""
-        self.chat_container.friend = value
+        if self.chat_container:
+            self.chat_container.friend = value
 
     @property
     def friend_status(self) -> str:
         """Get friend status."""
-        return self.chat_container.friend_status
+        if self.chat_container:
+            return self.chat_container.friend_status
+        return "offline"
 
     @friend_status.setter
     def friend_status(self, value: str) -> None:
         """Set friend status."""
-        self.chat_container.friend_status = value
+        if self.chat_container:
+            self.chat_container.friend_status = value
 
     @property
     def online(self) -> bool:
         """Get online status."""
-        return self.chat_container.online
+        if self.chat_container:
+            return self.chat_container.online
+        return False
 
     @online.setter
     def online(self, value: bool) -> None:
         """Set online status."""
-        self.chat_container.online = value
+        if self.chat_container:
+            self.chat_container.online = value
 
     @property
     def ping_ms(self) -> int | None:
         """Get ping latency."""
-        return self.chat_container.ping_ms
+        if self.chat_container:
+            return self.chat_container.ping_ms
+        return None
 
     @ping_ms.setter
     def ping_ms(self, value: int | None) -> None:
         """Set ping latency."""
-        self.chat_container.ping_ms = value
+        if self.chat_container:
+            self.chat_container.ping_ms = value
 
     @property
     def typing(self) -> bool:
         """Get typing indicator."""
-        return self.chat_container.typing
+        if self.chat_container:
+            return self.chat_container.typing
+        return False
 
     @typing.setter
     def typing(self, value: bool) -> None:
         """Set typing indicator."""
-        self.chat_container.typing = value
+        if self.chat_container:
+            self.chat_container.typing = value
 
     @property
     def input_buffer(self) -> str:
         """Get input buffer."""
-        return self.chat_container.input_buffer
+        if self.chat_container:
+            return self.chat_container.input_buffer
+        return ""
 
     @input_buffer.setter
     def input_buffer(self, value: str) -> None:
         """Set input buffer."""
-        self.chat_container.input_buffer = value
+        if self.chat_container:
+            self.chat_container.input_buffer = value
 
     @property
     def command_panel_visible(self) -> bool:
         """Get command panel visibility."""
-        return self.chat_container.command_panel_visible
+        if self.chat_container:
+            return self.chat_container.command_panel_visible
+        return True
 
     @command_panel_visible.setter
     def command_panel_visible(self, value: bool) -> None:
         """Set command panel visibility."""
-        self.chat_container.command_panel_visible = value
+        if self.chat_container:
+            self.chat_container.command_panel_visible = value
 
     @property
     def executing_command(self) -> str | None:
         """Get executing command."""
-        return self.chat_container.executing_command
+        if self.chat_container:
+            return self.chat_container.executing_command
+        return None
 
     @executing_command.setter
     def executing_command(self, value: str | None) -> None:
         """Set executing command."""
-        self.chat_container.executing_command = value
+        if self.chat_container:
+            self.chat_container.executing_command = value
 
     @property
     def self_status(self) -> str:
         """Get self status."""
-        return self.chat_container.self_status
+        if self.chat_container:
+            return self.chat_container.self_status
+        return "online"
 
     @self_status.setter
     def self_status(self, value: str) -> None:
         """Set self status."""
-        self.chat_container.self_status = value
+        if self.chat_container:
+            self.chat_container.self_status = value
 
     @property
     def message_scroll(self) -> int:
         """Get message scroll offset."""
-        return self.chat_container.message_scroll
+        if self.chat_container:
+            return self.chat_container.message_scroll
+        return 0
 
     @message_scroll.setter
     def message_scroll(self, value: int) -> None:
         """Set message scroll offset."""
-        self.chat_container.message_scroll = value
+        if self.chat_container:
+            self.chat_container.message_scroll = value
 
     @property
     def max_scroll(self) -> int:
         """Get maximum scroll offset."""
-        return self.chat_container.max_scroll
+        if self.chat_container:
+            return self.chat_container.max_scroll
+        return 0
 
     def add(self, sender: str, text: str, status: str = "") -> None:
         """Add a message (compatibility method)."""
-        self.chat_container.add_message(sender, text, status)
+        if self.chat_container:
+            self.chat_container.add_message(sender, text, status)
 
     def set_command_help(self, commands: list[tuple[str, str]]) -> None:
         """Set command help items."""
-        self.chat_container.set_command_help(commands)
+        self._pending_command_help = commands
+        if self.chat_container:
+            self.chat_container.set_command_help(commands)
 
     def scroll_messages(self, lines: int) -> None:
         """Scroll messages."""
-        self.chat_container.scroll_messages(lines)
+        if self.chat_container:
+            self.chat_container.scroll_messages(lines)
 
     def tick(self) -> None:
         """Tick animation (compatibility method)."""
-        self.chat_container.tick()
+        if self.chat_container:
+            self.chat_container.tick()
 
     def render(self) -> None:
         """Render the UI (no-op for Textual apps)."""
