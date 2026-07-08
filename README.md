@@ -50,12 +50,17 @@ python -m chat.client.client
 - `/ping` measures latency.
 - `/uptime` displays uptime-related status.
 - `/send FILE` uploads and shares a file.
+- `/pwd` shows the client's local working directory.
+- `/ls [DIR]` lists local files.
+- `/cd [DIR]` changes the client's local working directory used by `/send`.
 - `/history [N]` reloads message history.
 - `/clear` explains how to clear the live view.
 - `/online` shows presence in the header.
 - `/status` displays client status.
 - `/version` displays the app version.
 - `/quit` exits gracefully.
+
+Press `Tab` while typing a command to autocomplete command names and local paths for `/send`, `/ls`, and `/cd`. When either user runs a slash command, the other client receives a small system notice showing which command was used.
 
 ## Architecture
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from os import PathLike
 from pathlib import Path
 
 import aiofiles
@@ -12,7 +13,7 @@ from chat.shared.constants import CHUNK_SIZE
 from chat.shared.utils import ensure_dir
 
 
-async def upload(http_server: str, password: str, username: str, path: str) -> dict[str, object]:
+async def upload(http_server: str, password: str, username: str, path: str | PathLike[str]) -> dict[str, object]:
     source = Path(path).expanduser()
     if not source.is_file():
         raise FileNotFoundError(path)

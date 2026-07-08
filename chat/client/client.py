@@ -11,6 +11,7 @@ import time
 import tty
 from collections.abc import Iterator
 from contextlib import contextmanager
+from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -74,9 +75,40 @@ class ChatClient:
         self.running = True
         self._typing = False
         self._last_input_at = 0.0
+        self.current_dir = Path.cwd()
 
     def show(self, message: str) -> None:
         self.ui.add("System", message)
+
+    async def notify_command(self, name: str) -> None:
+        await self.ws.send(packet(PacketType.COMMAND, self.username, command=name))
+
+    def resolve_local_path(self, path: str) -> Path:
+        expanded = Path(path).expanduser()
+        if expanded.is_absolute():
+            return expanded
+        return (self.current_dir / expanded).resolve()
+
+    def print_working_directory(self) -> None:
+        self.show(str(self.current_dir))
+
+    def list_directory(self, path: str | None = None) -> None:
+        directory = self.resolve_local_path(path) if path else self.current_dir
+        if not directory.is_dir():
+            self.show(f"Not a directory: {directory}")
+            return
+        entries = sorted(directory.iterdir(), key=lambda item: (not item.is_dir(), item.name.lower()))
+        rendered = "  ".join(f"{entry.name}/" if entry.is_dir() else entry.name for entry in entries) or "<empty>"
+        self.show(rendered)
+
+    def change_directory(self, path: str) -> None:
+        directory = self.resolve_local_path(path)
+        if not directory.is_dir():
+            self.show(f"Not a directory: {directory}")
+            return
+        self.current_dir = directory
+        os.chdir(directory)
+        self.show(str(self.current_dir))
 
     async def stop(self) -> None:
         self.running = False
@@ -92,7 +124,8 @@ class ChatClient:
 
     async def send_file(self, path: str) -> None:
         try:
-            result = await upload(self.http_server, self.password, self.username, path)
+            source = self.resolve_local_path(path)
+            result = await upload(self.http_server, self.password, self.username, source)
             self.show(f"Sent file {result['filename']} ({result['size']} bytes)")
         except Exception as exc:
             self.show(f"File send failed: {exc}")
@@ -134,6 +167,11 @@ class ChatClient:
                 if key in {"\r", "\n"}:
                     await self.submit_input()
                     continue
+                if key == "\t":
+                    completed = registry.complete(self.ui.input_buffer)
+                    if completed:
+                        self.ui.input_buffer = completed
+                    continue
                 if key in {"\x7f", "\b"}:
                     self.ui.input_buffer = self.ui.input_buffer[:-1]
                     if not self.ui.input_buffer:
@@ -170,6 +208,8 @@ class ChatClient:
                 if online: self.ui.friend = online[0]
             elif pkt.type == PacketType.TYPING:
                 self.ui.typing = bool(pkt.payload.get("typing"))
+            elif pkt.type == PacketType.COMMAND and pkt.username != self.username:
+                self.show(f"{pkt.username} used /{pkt.payload.get('command', 'unknown')}")
             elif pkt.type == PacketType.PONG:
                 ms = self.ping.received(str(pkt.payload.get("echo")))
                 if ms is not None: self.ui.ping_ms = ms

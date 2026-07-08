@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import shlex
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Protocol
 
 
@@ -12,6 +14,10 @@ class ClientLike(Protocol):
     async def send_file(self, path: str) -> None: ...
     async def ping_once(self) -> None: ...
     async def stop(self) -> None: ...
+    async def notify_command(self, name: str) -> None: ...
+    def change_directory(self, path: str) -> None: ...
+    def list_directory(self, path: str | None = None) -> None: ...
+    def print_working_directory(self) -> None: ...
     def show(self, message: str) -> None: ...
 
 Handler = Callable[[ClientLike, list[str]], Awaitable[None]]
@@ -35,14 +41,43 @@ class Registry:
         return decorator
 
     async def execute(self, client: ClientLike, line: str) -> bool:
-        parts = line.split()
+        try:
+            parts = shlex.split(line)
+        except ValueError as exc:
+            client.show(f"Invalid command syntax: {exc}")
+            return True
+        if not parts:
+            return True
         name = parts[0][1:]
         command = self.commands.get(name)
         if command is None:
             client.show(f"Unknown command: /{name}")
             return True
+        await client.notify_command(name)
         await command.handler(client, parts[1:])
         return True
+
+    def complete(self, line: str) -> str | None:
+        if not line.startswith("/"):
+            return None
+        parts = line.split()
+        if len(parts) <= 1 and not line.endswith(" "):
+            prefix = line[1:]
+            matches = [f"/{name}" for name in self.commands if name.startswith(prefix)]
+            if len(matches) == 1:
+                return matches[0] + " "
+            return None
+        command = parts[0][1:]
+        if command in {"send", "ls", "cd"}:
+            token = "" if line.endswith(" ") else parts[-1]
+            raw_path = Path(token).expanduser()
+            parent = raw_path.parent if raw_path.parent != Path(".") else Path.cwd()
+            pattern = raw_path.name + "*"
+            matches = sorted(parent.glob(pattern))
+            if len(matches) == 1:
+                suffix = "/" if matches[0].is_dir() else " "
+                return f"{parts[0]} {matches[0]}{suffix}"
+        return None
 
 
 registry = Registry()
@@ -58,6 +93,12 @@ async def ping_cmd(client: ClientLike, args: list[str]) -> None: await client.pi
 async def uptime_cmd(client: ClientLike, args: list[str]) -> None: client.show("Uptime is tracked by the server logs.")
 @registry.register("send", "Send a file")
 async def send_cmd(client: ClientLike, args: list[str]) -> None: await client.send_file(" ".join(args)) if args else client.show("Usage: /send FILE")
+@registry.register("pwd", "Show local working directory")
+async def pwd_cmd(client: ClientLike, args: list[str]) -> None: client.print_working_directory()
+@registry.register("ls", "List local files")
+async def ls_cmd(client: ClientLike, args: list[str]) -> None: client.list_directory(args[0] if args else None)
+@registry.register("cd", "Change local working directory")
+async def cd_cmd(client: ClientLike, args: list[str]) -> None: client.change_directory(args[0] if args else "~")
 @registry.register("history", "Load history")
 async def history_cmd(client: ClientLike, args: list[str]) -> None: await client.request_history(int(args[0]) if args else 100)
 @registry.register("clear", "Clear screen")

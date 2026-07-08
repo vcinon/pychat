@@ -109,7 +109,7 @@ class ConnectionManager:
             if pkt.payload.get("status") == "read":
                 await self.db.mark_read(str(pkt.payload.get("message_id")), iso_now())
             await self.broadcast(pkt, exclude=username)
-        elif pkt.type in {PacketType.TYPING, PacketType.PING, PacketType.PONG, PacketType.HEARTBEAT}:
+        elif pkt.type in {PacketType.TYPING, PacketType.PING, PacketType.PONG, PacketType.HEARTBEAT, PacketType.COMMAND}:
             if pkt.type == PacketType.PING:
                 await websocket.send_text(packet(PacketType.PONG, "server", echo=pkt.id).json_text())
             await self.broadcast(pkt, exclude=username)
