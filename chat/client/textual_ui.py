@@ -10,11 +10,12 @@ from rich.text import Text
 from rich.panel import Panel
 from rich.table import Table
 from textual.app import App, ComposeResult
-from textual.containers import Container, Horizontal, Vertical, VerticalScroll
-from textual.widgets import Header, Footer, Static, Input
+from textual.containers import Container, Vertical
+from textual.widgets import Header, Footer, Static
 from textual.binding import Binding
 from textual.reactive import reactive
 from textual.message import Message
+from textual.events import Key
 
 from chat.shared.constants import APP_NAME
 
@@ -131,7 +132,7 @@ class MessageDisplay(Static):
 
     def add_message(self, sender: str, text: str, status: str = "") -> None:
         """Add a message to the display."""
-        self.messages.append((sender, text, status))
+        self.messages = [*self.messages, (sender, text, status)]
         self.message_scroll = min(self.message_scroll, self.max_scroll)
 
     def scroll_messages(self, lines: int) -> None:
@@ -199,6 +200,13 @@ class ChatContainer(Container):
             self.sender = sender
             self.text = text
             self.status = status
+            super().__init__()
+
+    class InputSubmitted(Message):
+        """Posted when input is submitted."""
+
+        def __init__(self, text: str) -> None:
+            self.text = text
             super().__init__()
 
     class CommandsVisibilityChanged(Message):
@@ -335,12 +343,12 @@ class ChatUI(App):
     #chat-main {
         height: 1fr;
         width: 1fr;
+        border: solid $accent;
     }
 
     #message-display {
         height: 1fr;
         width: 1fr;
-        border: solid $accent;
     }
 
     #input-prompt {
@@ -355,12 +363,17 @@ class ChatUI(App):
         display: block;
     }
 
-    Horizontal {
+    #chat-container {
         height: 1fr;
         width: 1fr;
     }
 
     Vertical {
+        height: 1fr;
+        width: 1fr;
+    }
+
+    Horizontal {
         height: 1fr;
         width: 1fr;
     }
@@ -379,6 +392,7 @@ class ChatUI(App):
         self.username = username
         self.input_history: list[str] = []
         self.history_index: int | None = None
+        self.client_callback: Any = None
 
     def compose(self) -> ComposeResult:
         """Compose the app layout."""
@@ -412,6 +426,34 @@ class ChatUI(App):
     def action_scroll_end(self) -> None:
         """Scroll to end (End key)."""
         self.chat_container.scroll_messages(-self.chat_container.max_scroll)
+
+    def on_key(self, event: Key) -> None:
+        """Handle keyboard input."""
+        if not self.client_callback:
+            return
+
+        # Handle special keys
+        if event.key == "up":
+            self.client_callback("restore_history", up=True)
+            event.prevent_default()
+        elif event.key == "down":
+            self.client_callback("restore_history", up=False)
+            event.prevent_default()
+        elif event.key == "tab":
+            self.client_callback("tab_complete")
+            event.prevent_default()
+        elif event.key in ("backspace", "delete"):
+            self.input_buffer = self.input_buffer[:-1]
+            self.client_callback("input_changed")
+            event.prevent_default()
+        elif event.key == "enter":
+            self.client_callback("submit_input", text=self.input_buffer)
+            self.input_buffer = ""
+            event.prevent_default()
+        elif event.character and event.character.isprintable():
+            self.input_buffer += event.character
+            self.client_callback("input_changed")
+            event.prevent_default()
 
     # Delegated properties and methods for compatibility with ChatClient
 
