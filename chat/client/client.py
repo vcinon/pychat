@@ -155,7 +155,10 @@ class ChatClient:
         self.show(str(self.current_dir))
 
     async def stop(self) -> None:
+        await self.set_typing(False)
+        await self.set_presence_status("offline")
         self.running = False
+        await asyncio.sleep(0.05)
         await self.ws.close()
 
     async def request_history(self, limit: int = 100) -> None:
@@ -230,10 +233,7 @@ class ChatClient:
                         await self.set_typing(False)
                     continue
                 if key == "\x1b":  # Drop escape sequences such as arrow keys.
-                    second = await read_key(timeout=0.01)
-                    third = await read_key(timeout=0.01)
-                    if second == "[" and third in {"A", "B"}:
-                        self.restore_input_history(up=third == "A")
+                    await self.handle_escape_sequence()
                     continue
                 if key.isprintable():
                     self.ui.input_buffer += key
@@ -253,6 +253,30 @@ class ChatClient:
             self.ui.input_buffer = ""
             return
         self.ui.input_buffer = self._input_history[self._history_index]
+
+    async def handle_escape_sequence(self) -> None:
+        sequence = ""
+        while len(sequence) < 5:
+            key = await read_key(timeout=0.05)
+            if key is None:
+                break
+            sequence += key
+            if key.isalpha() or key == "~":
+                break
+        if sequence == "[A":
+            self.restore_input_history(up=True)
+        elif sequence == "[B":
+            self.restore_input_history(up=False)
+        elif sequence in {"[C", "[D"}:
+            return
+        elif sequence == "[5~":
+            self.ui.scroll_messages(5)
+        elif sequence == "[6~":
+            self.ui.scroll_messages(-5)
+        elif sequence in {"[H", "[1~"}:
+            self.ui.scroll_messages(self.ui.max_scroll)
+        elif sequence in {"[F", "[4~"}:
+            self.ui.scroll_messages(-self.ui.max_scroll)
 
     async def incoming_loop(self) -> None:
         while self.running:

@@ -63,7 +63,7 @@ python -m chat.client.client
 
 Press `Tab` while typing a command to autocomplete command names and local paths for `/send`, `/ls`, and `/cd`. When either user runs a slash command, the other client receives a small system notice showing which command was used.
 
-Use the up/down arrow keys to restore previously submitted messages or commands. Presence supports `online`, `idle`, and `offline`; idle is set automatically after local inactivity while the app is still running.
+Use the up/down arrow keys to restore previously submitted messages or commands, and PageUp/PageDown to scroll through messages without leaving the TUI. Presence supports `online`, `idle`, and `offline`; idle is set automatically after local inactivity while the app is still running.
 
 ## Architecture
 

@@ -47,16 +47,31 @@ class ChatUI:
     input_buffer: str = ""
     command_panel_visible: bool = True
     executing_command: str | None = None
+    message_scroll: int = 0
     frame: int = 0
 
     def add(self, sender: str, text: str, status: str = "") -> None:
         self.messages.append((sender, text, status))
+        self.message_scroll = min(self.message_scroll, self.max_scroll)
 
     def set_command_help(self, commands: list[tuple[str, str]]) -> None:
         self.command_help = [CommandHelp(name, description) for name, description in commands]
 
     def tick(self) -> None:
         self.frame = (self.frame + 1) % 1_000_000
+
+    @property
+    def max_scroll(self) -> int:
+        return max(0, len(self.messages) - 1)
+
+    def scroll_messages(self, lines: int) -> None:
+        self.message_scroll = max(0, min(self.max_scroll, self.message_scroll + lines))
+
+    def _visible_messages(self) -> list[tuple[str, str, str]]:
+        window = 40
+        end = max(0, len(self.messages) - self.message_scroll)
+        start = max(0, end - window)
+        return self.messages[start:end]
 
     def _status_line(self) -> str:
         if self.friend_status == "online":
@@ -74,7 +89,9 @@ class ChatUI:
         table = Table.grid(expand=True)
         table.add_column(ratio=1)
         table.add_row(f"[bold {OPENCLAW['accent']}]{APP_NAME}[/]\n\n{self._status_line()}\n[{OPENCLAW['border']}]" + "─" * 34 + "[/]")
-        for sender, text, receipt in self.messages[-100:]:
+        if self.message_scroll:
+            table.add_row(f"[{OPENCLAW['dim']}]↑ scrolled back {self.message_scroll} message(s) • PageDown/End to latest[/]")
+        for sender, text, receipt in self._visible_messages():
             sender_style = OPENCLAW["quote"] if sender not in {"You", "System"} else OPENCLAW["accent"]
             if sender == "System":
                 sender_style = OPENCLAW["system"]
@@ -98,6 +115,7 @@ class ChatUI:
             table.add_row(f"[{OPENCLAW['accent']}]{command.name:<12}[/] [{OPENCLAW['dim']}]{command.description}[/]")
         table.add_row("")
         table.add_row(f"[{OPENCLAW['dim']}]Tab autocomplete • ↑/↓ history[/]")
+        table.add_row(f"[{OPENCLAW['dim']}]PageUp/PageDown scroll messages[/]")
         table.add_row(f"[{OPENCLAW['dim']}]/commands hide|show|off[/]")
         return Panel(table, title="Commands", border_style=OPENCLAW["border"], style=OPENCLAW["text"])
 
