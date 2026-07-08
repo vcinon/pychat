@@ -4,24 +4,20 @@ from __future__ import annotations
 
 import asyncio
 import os
-import select
 import sys
-import termios
 import time
-import tty
 import json
-from collections.abc import Iterator
-from contextlib import contextmanager
 from pathlib import Path
 
 from dotenv import load_dotenv
+from textual.pilot import Pilot
 
 from chat.client.commands import registry
 from chat.client.crypto import MessageCrypto
 from chat.client.file_transfer import download, upload
 from chat.client.notifications import Notifier
 from chat.client.ping import PingTracker
-from chat.client.ui import ChatUI
+from chat.client.textual_ui import ChatUI
 from chat.client.websocket import WebSocketClient
 from chat.shared.constants import IDLE_TIMEOUT_SECONDS, PING_INTERVAL_SECONDS, TYPING_TIMEOUT_SECONDS
 from chat.shared.packet import Packet, PacketType
@@ -30,34 +26,6 @@ from chat.shared.utils import configure_logging
 
 load_dotenv()
 logger = configure_logging("chat.client", os.getenv("LOG_LEVEL", "INFO"))
-
-
-@contextmanager
-def raw_terminal() -> Iterator[None]:
-    """Temporarily read stdin one character at a time without terminal echo."""
-
-    if not sys.stdin.isatty():
-        yield
-        return
-    file_descriptor = sys.stdin.fileno()
-    previous = termios.tcgetattr(file_descriptor)
-    try:
-        tty.setcbreak(file_descriptor)
-        yield
-    finally:
-        termios.tcsetattr(file_descriptor, termios.TCSADRAIN, previous)
-
-
-async def read_key(timeout: float = 0.25) -> str | None:
-    """Read one keypress without letting stdin redraw over Rich's live UI."""
-
-    def _read() -> str | None:
-        readable, _, _ = select.select([sys.stdin], [], [], timeout)
-        if not readable:
-            return None
-        return sys.stdin.read(1)
-
-    return await asyncio.to_thread(_read)
 
 
 class ChatClient:
@@ -84,6 +52,7 @@ class ChatClient:
         self.ui_config_path = Path.home() / ".pychat_ui.json"
         self.current_dir = Path.cwd()
         self.load_ui_preferences()
+        self.app_pilot: Pilot | None = None
 
     def show(self, message: str) -> None:
         self.ui.add("System", message)
@@ -160,6 +129,8 @@ class ChatClient:
         self.running = False
         await asyncio.sleep(0.05)
         await self.ws.close()
+        if self.app_pilot:
+            await self.app_pilot.app.exit()
 
     async def request_history(self, limit: int = 100) -> None:
         await self.ws.send(packet(PacketType.HISTORY_REQUEST, self.username, limit=limit))
@@ -204,42 +175,6 @@ class ChatClient:
         else:
             await self.send_message(line)
 
-    async def input_loop(self) -> None:
-        with raw_terminal():
-            while self.running:
-                key = await read_key()
-                if key is None:
-                    if self._typing and time.monotonic() - self._last_input_at >= TYPING_TIMEOUT_SECONDS:
-                        await self.set_typing(False)
-                    continue
-                self.mark_activity()
-                if key in {"\x03", "\x04"}:  # Ctrl-C / Ctrl-D
-                    await self.stop()
-                    return
-                if key in {"\r", "\n"}:
-                    if self.ui.input_buffer.strip():
-                        self._input_history.append(self.ui.input_buffer)
-                    self._history_index = None
-                    await self.submit_input()
-                    continue
-                if key == "\t":
-                    completed = registry.complete(self.ui.input_buffer)
-                    if completed:
-                        self.ui.input_buffer = completed
-                    continue
-                if key in {"\x7f", "\b"}:
-                    self.ui.input_buffer = self.ui.input_buffer[:-1]
-                    if not self.ui.input_buffer:
-                        await self.set_typing(False)
-                    continue
-                if key == "\x1b":  # Drop escape sequences such as arrow keys.
-                    await self.handle_escape_sequence()
-                    continue
-                if key.isprintable():
-                    self.ui.input_buffer += key
-                    self._last_input_at = time.monotonic()
-                    await self.set_typing(True)
-
     def restore_input_history(self, up: bool) -> None:
         if not self._input_history:
             return
@@ -254,35 +189,11 @@ class ChatClient:
             return
         self.ui.input_buffer = self._input_history[self._history_index]
 
-    async def handle_escape_sequence(self) -> None:
-        sequence = ""
-        while len(sequence) < 5:
-            key = await read_key(timeout=0.05)
-            if key is None:
-                break
-            sequence += key
-            if key.isalpha() or key == "~":
-                break
-        if sequence == "[A":
-            self.restore_input_history(up=True)
-        elif sequence == "[B":
-            self.restore_input_history(up=False)
-        elif sequence in {"[C", "[D"}:
-            return
-        elif sequence == "[5~":
-            self.ui.scroll_messages(5)
-        elif sequence == "[6~":
-            self.ui.scroll_messages(-5)
-        elif sequence in {"[H", "[1~"}:
-            self.ui.scroll_messages(self.ui.max_scroll)
-        elif sequence in {"[F", "[4~"}:
-            self.ui.scroll_messages(-self.ui.max_scroll)
-
     async def incoming_loop(self) -> None:
         while self.running:
             pkt = await self.incoming.get()
             if pkt.type == PacketType.HISTORY:
-                self.ui.messages.clear()
+                self.ui.messages = []
                 for msg in pkt.payload.get("messages", []):
                     try:
                         text = self.crypto.decrypt(msg["encrypted_message"])
@@ -312,7 +223,8 @@ class ChatClient:
                 self.show(f"{pkt.username} used /{pkt.payload.get('command', 'unknown')}")
             elif pkt.type == PacketType.PONG:
                 ms = self.ping.received(str(pkt.payload.get("echo")))
-                if ms is not None: self.ui.ping_ms = ms
+                if ms is not None:
+                    self.ui.ping_ms = ms
             elif pkt.type == PacketType.FILE and pkt.payload.get("sender") != self.username:
                 saved = await download(self.http_server, str(pkt.payload["id"]), str(pkt.payload["filename"]), self.download_dir)
                 self.show(f"Downloaded file to {saved}")
@@ -328,22 +240,41 @@ class ChatClient:
             await self.set_presence_status(status)
             await asyncio.sleep(2)
 
+    async def textual_input_handler(self) -> None:
+        """Handle input events from Textual UI."""
+        while self.running:
+            await asyncio.sleep(0.1)
+            
+            # Check for typing timeout
+            if self._typing and time.monotonic() - self._last_input_at >= TYPING_TIMEOUT_SECONDS:
+                await self.set_typing(False)
+
     async def run(self) -> None:
+        # Run the Textual app in the background with asyncio integration
         ws_task = asyncio.create_task(self.ws.run())
-        with self.ui.live() as live:
-            async def refresh() -> None:
-                while self.running:
-                    self.ui.tick()
-                    live.update(self.ui.render())
-                    await asyncio.sleep(0.08)
-            tasks = [ws_task, asyncio.create_task(self.incoming_loop()), asyncio.create_task(self.ping_loop()), asyncio.create_task(self.presence_loop()), asyncio.create_task(self.input_loop()), asyncio.create_task(refresh())]
-            try:
-                await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-            except KeyboardInterrupt:
-                await self.stop()
-            finally:
-                await self.stop()
-                for task in tasks: task.cancel()
+        input_task = asyncio.create_task(self.textual_input_handler())
+        
+        tasks = [
+            ws_task,
+            asyncio.create_task(self.incoming_loop()),
+            asyncio.create_task(self.ping_loop()),
+            asyncio.create_task(self.presence_loop()),
+            input_task,
+        ]
+        
+        try:
+            # Run Textual app - this blocks until the app is closed
+            await self.ui.run_async(inline=True, inline_no_clear=True)
+        except KeyboardInterrupt:
+            await self.stop()
+        finally:
+            await self.stop()
+            for task in tasks:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
 
 
 def main() -> None:
