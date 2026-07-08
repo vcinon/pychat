@@ -22,5 +22,7 @@ def decode_packet(raw: str | bytes) -> Packet:
         raise ProtocolError(str(exc)) from exc
 
 
-def packet(packet_type: PacketType, username: str, **payload: Any) -> Packet:
-    return Packet(type=packet_type, username=username, payload=payload)
+def packet(packet_type: PacketType, packet_username: str, **payload: Any) -> Packet:
+    """Build a packet while allowing ``username`` to appear inside payloads."""
+
+    return Packet(type=packet_type, username=packet_username, payload=payload)

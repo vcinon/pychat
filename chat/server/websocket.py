@@ -44,7 +44,7 @@ class ConnectionManager:
             if old is not None:
                 await old.close(code=1000, reason="new session connected")
             self.active[username] = websocket
-        await websocket.send_text(packet(PacketType.AUTH_OK, "server", username=username).json_text())
+        await websocket.send_text(packet(PacketType.AUTH_OK, "server", authenticated_username=username).json_text())
         await self.broadcast_presence()
         await self.send_history(websocket, username, 100)
         logger.info("%s connected", username)
