@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from rich.console import Console
 from rich.live import Live
 from rich.panel import Panel
+from rich.text import Text
 from rich.table import Table
 
 from chat.shared.constants import APP_NAME
@@ -21,6 +22,7 @@ class ChatUI:
     online: bool = False
     ping_ms: int | None = None
     typing: bool = False
+    input_buffer: str = ""
 
     def add(self, sender: str, text: str, status: str = "") -> None:
         self.messages.append((sender, text, status))
@@ -36,8 +38,18 @@ class ChatUI:
             table.add_row(f"[bold]{sender}:[/bold]\n{text} {receipt}")
         if self.typing:
             table.add_row(f"[italic]{self.friend} is typing...[/italic]")
-        table.add_row("\n> _")
+        prompt = Text("\n> ")
+        prompt.append(self.input_buffer)
+        prompt.append("▌", style="bold")
+        table.add_row(prompt)
         return Panel(table)
 
     def live(self) -> Live:
-        return Live(self.render(), console=self.console, refresh_per_second=8, screen=False)
+        return Live(
+            self.render(),
+            console=self.console,
+            refresh_per_second=12,
+            screen=True,
+            redirect_stdout=False,
+            redirect_stderr=False,
+        )

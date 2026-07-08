@@ -4,6 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import os
+import select
+import sys
+import termios
+import time
+import tty
+from collections.abc import Iterator
+from contextlib import contextmanager
 
 from dotenv import load_dotenv
 
@@ -14,13 +21,41 @@ from chat.client.notifications import Notifier
 from chat.client.ping import PingTracker
 from chat.client.ui import ChatUI
 from chat.client.websocket import WebSocketClient
-from chat.shared.constants import PING_INTERVAL_SECONDS
+from chat.shared.constants import PING_INTERVAL_SECONDS, TYPING_TIMEOUT_SECONDS
 from chat.shared.packet import Packet, PacketType
 from chat.shared.protocol import packet
 from chat.shared.utils import configure_logging
 
 load_dotenv()
 logger = configure_logging("chat.client", os.getenv("LOG_LEVEL", "INFO"))
+
+
+@contextmanager
+def raw_terminal() -> Iterator[None]:
+    """Temporarily read stdin one character at a time without terminal echo."""
+
+    if not sys.stdin.isatty():
+        yield
+        return
+    file_descriptor = sys.stdin.fileno()
+    previous = termios.tcgetattr(file_descriptor)
+    try:
+        tty.setcbreak(file_descriptor)
+        yield
+    finally:
+        termios.tcsetattr(file_descriptor, termios.TCSADRAIN, previous)
+
+
+async def read_key(timeout: float = 0.25) -> str | None:
+    """Read one keypress without letting stdin redraw over Rich's live UI."""
+
+    def _read() -> str | None:
+        readable, _, _ = select.select([sys.stdin], [], [], timeout)
+        if not readable:
+            return None
+        return sys.stdin.read(1)
+
+    return await asyncio.to_thread(_read)
 
 
 class ChatClient:
@@ -37,6 +72,8 @@ class ChatClient:
         self.notifier = Notifier(os.getenv("NOTIFICATIONS", "true").lower() == "true")
         self.ping = PingTracker()
         self.running = True
+        self._typing = False
+        self._last_input_at = 0.0
 
     def show(self, message: str) -> None:
         self.ui.add("System", message)
@@ -66,15 +103,50 @@ class ChatClient:
         self.ui.add("You", text, "✓ Sent")
         await self.ws.send(pkt)
 
+    async def set_typing(self, typing: bool) -> None:
+        if self._typing == typing:
+            return
+        self._typing = typing
+        await self.ws.send(packet(PacketType.TYPING, self.username, typing=typing))
+
+    async def submit_input(self) -> None:
+        line = self.ui.input_buffer.strip()
+        self.ui.input_buffer = ""
+        await self.set_typing(False)
+        if not line:
+            return
+        if line.startswith("/"):
+            await registry.execute(self, line)
+        else:
+            await self.send_message(line)
+
     async def input_loop(self) -> None:
-        while self.running:
-            line = await asyncio.to_thread(input, "")
-            if not line:
-                continue
-            if line.startswith("/"):
-                await registry.execute(self, line)
-            else:
-                await self.send_message(line)
+        with raw_terminal():
+            while self.running:
+                key = await read_key()
+                if key is None:
+                    if self._typing and time.monotonic() - self._last_input_at >= TYPING_TIMEOUT_SECONDS:
+                        await self.set_typing(False)
+                    continue
+                if key in {"\x03", "\x04"}:  # Ctrl-C / Ctrl-D
+                    await self.stop()
+                    return
+                if key in {"\r", "\n"}:
+                    await self.submit_input()
+                    continue
+                if key in {"\x7f", "\b"}:
+                    self.ui.input_buffer = self.ui.input_buffer[:-1]
+                    if not self.ui.input_buffer:
+                        await self.set_typing(False)
+                    continue
+                if key == "\x1b":  # Drop escape sequences such as arrow keys.
+                    for _ in range(2):
+                        await read_key(timeout=0.01)
+                    continue
+                if key.isprintable():
+                    self.ui.input_buffer += key
+                    self._last_input_at = time.monotonic()
+                    await self.set_typing(True)
 
     async def incoming_loop(self) -> None:
         while self.running:
