@@ -10,7 +10,6 @@ import json
 from pathlib import Path
 
 from dotenv import load_dotenv
-from textual.pilot import Pilot
 
 from chat.client.commands import registry
 from chat.client.crypto import MessageCrypto
@@ -40,6 +39,7 @@ class ChatClient:
         self.ws = WebSocketClient(self.server, self.username, self.password, self.incoming)
         self.ui = ChatUI(self.username)
         self.ui.set_command_help(registry.help_items())
+        self.ui.client_callback = self._handle_ui_callback
         self.notifier = Notifier(os.getenv("NOTIFICATIONS", "true").lower() == "true")
         self.ping = PingTracker()
         self.running = True
@@ -52,7 +52,19 @@ class ChatClient:
         self.ui_config_path = Path.home() / ".pychat_ui.json"
         self.current_dir = Path.cwd()
         self.load_ui_preferences()
-        self.app_pilot: Pilot | None = None
+
+    def _handle_ui_callback(self, action: str, **kwargs) -> None:
+        """Handle UI callbacks from Textual."""
+        if action == "restore_history":
+            self.restore_input_history(kwargs.get("up", False))
+        elif action == "tab_complete":
+            completed = registry.complete(self.ui.input_buffer)
+            if completed:
+                self.ui.input_buffer = completed
+        elif action == "input_changed":
+            self.mark_activity()
+        elif action == "submit_input":
+            asyncio.create_task(self.submit_input())
 
     def show(self, message: str) -> None:
         self.ui.add("System", message)
@@ -69,6 +81,7 @@ class ChatClient:
 
     def mark_activity(self) -> None:
         self._last_activity_at = time.monotonic()
+        self._last_input_at = time.monotonic()
 
     def load_ui_preferences(self) -> None:
         try:
@@ -129,8 +142,7 @@ class ChatClient:
         self.running = False
         await asyncio.sleep(0.05)
         await self.ws.close()
-        if self.app_pilot:
-            await self.app_pilot.app.exit()
+        await self.ui.exit()
 
     async def request_history(self, limit: int = 100) -> None:
         await self.ws.send(packet(PacketType.HISTORY_REQUEST, self.username, limit=limit))
@@ -174,6 +186,10 @@ class ChatClient:
                 self.ui.executing_command = None
         else:
             await self.send_message(line)
+        # Add to history
+        if line:
+            self._input_history.append(line)
+        self._history_index = None
 
     def restore_input_history(self, up: bool) -> None:
         if not self._input_history:
@@ -191,7 +207,11 @@ class ChatClient:
 
     async def incoming_loop(self) -> None:
         while self.running:
-            pkt = await self.incoming.get()
+            try:
+                pkt = await self.incoming.get()
+            except asyncio.CancelledError:
+                break
+            
             if pkt.type == PacketType.HISTORY:
                 self.ui.messages = []
                 for msg in pkt.payload.get("messages", []):
@@ -231,50 +251,56 @@ class ChatClient:
 
     async def ping_loop(self) -> None:
         while self.running:
-            await self.ping_once()
-            await asyncio.sleep(PING_INTERVAL_SECONDS)
+            try:
+                await self.ping_once()
+                await asyncio.sleep(PING_INTERVAL_SECONDS)
+            except asyncio.CancelledError:
+                break
 
     async def presence_loop(self) -> None:
         while self.running:
-            status = "idle" if time.monotonic() - self._last_activity_at >= IDLE_TIMEOUT_SECONDS else "online"
-            await self.set_presence_status(status)
-            await asyncio.sleep(2)
+            try:
+                status = "idle" if time.monotonic() - self._last_activity_at >= IDLE_TIMEOUT_SECONDS else "online"
+                await self.set_presence_status(status)
+                await asyncio.sleep(2)
+            except asyncio.CancelledError:
+                break
 
-    async def textual_input_handler(self) -> None:
-        """Handle input events from Textual UI."""
+    async def typing_timeout_loop(self) -> None:
+        """Monitor typing timeout."""
         while self.running:
-            await asyncio.sleep(0.1)
-            
-            # Check for typing timeout
-            if self._typing and time.monotonic() - self._last_input_at >= TYPING_TIMEOUT_SECONDS:
-                await self.set_typing(False)
+            try:
+                if self._typing and time.monotonic() - self._last_input_at >= TYPING_TIMEOUT_SECONDS:
+                    await self.set_typing(False)
+                await asyncio.sleep(0.5)
+            except asyncio.CancelledError:
+                break
 
     async def run(self) -> None:
-        # Run the Textual app in the background with asyncio integration
+        # Create background tasks
         ws_task = asyncio.create_task(self.ws.run())
-        input_task = asyncio.create_task(self.textual_input_handler())
+        incoming_task = asyncio.create_task(self.incoming_loop())
+        ping_task = asyncio.create_task(self.ping_loop())
+        presence_task = asyncio.create_task(self.presence_loop())
+        typing_task = asyncio.create_task(self.typing_timeout_loop())
         
-        tasks = [
-            ws_task,
-            asyncio.create_task(self.incoming_loop()),
-            asyncio.create_task(self.ping_loop()),
-            asyncio.create_task(self.presence_loop()),
-            input_task,
-        ]
+        tasks = [ws_task, incoming_task, ping_task, presence_task, typing_task]
         
         try:
             # Run Textual app - this blocks until the app is closed
             await self.ui.run_async(inline=True, inline_no_clear=True)
         except KeyboardInterrupt:
             await self.stop()
-        finally:
+        except Exception as e:
+            logger.exception("Client error: %s", e)
             await self.stop()
+        finally:
+            self.running = False
             for task in tasks:
-                task.cancel()
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
+                if not task.done():
+                    task.cancel()
+            # Wait for all tasks to complete
+            await asyncio.gather(*tasks, return_exceptions=True)
 
 
 def main() -> None:
@@ -282,6 +308,9 @@ def main() -> None:
         asyncio.run(ChatClient().run())
     except KeyboardInterrupt:
         pass
+    except Exception as e:
+        logger.exception("Fatal error: %s", e)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
