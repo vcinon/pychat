@@ -24,6 +24,7 @@ class ConnectionManager:
         self.db = db
         self.password = password
         self.active: dict[str, WebSocket] = {}
+        self.statuses: dict[str, str] = {}
         self.lock = asyncio.Lock()
         self.started_at = iso_now()
 
@@ -44,6 +45,7 @@ class ConnectionManager:
             if old is not None:
                 await old.close(code=1000, reason="new session connected")
             self.active[username] = websocket
+            self.statuses[username] = "online"
         await websocket.send_text(packet(PacketType.AUTH_OK, "server", authenticated_username=username).json_text())
         await self.broadcast_presence()
         await self.send_history(websocket, username, 100)
@@ -53,12 +55,13 @@ class ConnectionManager:
     async def disconnect(self, username: str) -> None:
         async with self.lock:
             self.active.pop(username, None)
+            self.statuses[username] = "offline"
         await self.broadcast_presence()
         logger.info("%s disconnected", username)
 
     async def broadcast_presence(self) -> None:
         users = list(self.active)
-        await self.broadcast(packet(PacketType.PRESENCE, "server", online=users))
+        await self.broadcast(packet(PacketType.PRESENCE, "server", online=users, statuses=dict(self.statuses)))
 
     async def broadcast(self, pkt: Packet, exclude: str | None = None) -> None:
         dead: list[str] = []
@@ -109,6 +112,9 @@ class ConnectionManager:
             if pkt.payload.get("status") == "read":
                 await self.db.mark_read(str(pkt.payload.get("message_id")), iso_now())
             await self.broadcast(pkt, exclude=username)
+        elif pkt.type == PacketType.PRESENCE:
+            self.statuses[username] = str(pkt.payload.get("status", "online"))
+            await self.broadcast_presence()
         elif pkt.type in {PacketType.TYPING, PacketType.PING, PacketType.PONG, PacketType.HEARTBEAT, PacketType.COMMAND}:
             if pkt.type == PacketType.PING:
                 await websocket.send_text(packet(PacketType.PONG, "server", echo=pkt.id).json_text())

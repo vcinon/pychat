@@ -9,6 +9,7 @@ import sys
 import termios
 import time
 import tty
+import json
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -22,7 +23,7 @@ from chat.client.notifications import Notifier
 from chat.client.ping import PingTracker
 from chat.client.ui import ChatUI
 from chat.client.websocket import WebSocketClient
-from chat.shared.constants import PING_INTERVAL_SECONDS, TYPING_TIMEOUT_SECONDS
+from chat.shared.constants import IDLE_TIMEOUT_SECONDS, PING_INTERVAL_SECONDS, TYPING_TIMEOUT_SECONDS
 from chat.shared.packet import Packet, PacketType
 from chat.shared.protocol import packet
 from chat.shared.utils import configure_logging
@@ -70,18 +71,61 @@ class ChatClient:
         self.incoming: asyncio.Queue[Packet] = asyncio.Queue()
         self.ws = WebSocketClient(self.server, self.username, self.password, self.incoming)
         self.ui = ChatUI(self.username)
+        self.ui.set_command_help(registry.help_items())
         self.notifier = Notifier(os.getenv("NOTIFICATIONS", "true").lower() == "true")
         self.ping = PingTracker()
         self.running = True
         self._typing = False
         self._last_input_at = 0.0
+        self._last_activity_at = time.monotonic()
+        self._presence_status = "online"
+        self._input_history: list[str] = []
+        self._history_index: int | None = None
+        self.ui_config_path = Path.home() / ".pychat_ui.json"
         self.current_dir = Path.cwd()
+        self.load_ui_preferences()
 
     def show(self, message: str) -> None:
         self.ui.add("System", message)
 
     async def notify_command(self, name: str) -> None:
         await self.ws.send(packet(PacketType.COMMAND, self.username, command=name))
+
+    async def set_presence_status(self, status: str) -> None:
+        if self._presence_status == status:
+            return
+        self._presence_status = status
+        self.ui.self_status = status
+        await self.ws.send(packet(PacketType.PRESENCE, self.username, status=status))
+
+    def mark_activity(self) -> None:
+        self._last_activity_at = time.monotonic()
+
+    def load_ui_preferences(self) -> None:
+        try:
+            data = json.loads(self.ui_config_path.read_text())
+        except (OSError, json.JSONDecodeError):
+            return
+        self.ui.command_panel_visible = bool(data.get("command_panel_visible", True))
+
+    def save_ui_preferences(self) -> None:
+        self.ui_config_path.write_text(json.dumps({"command_panel_visible": self.ui.command_panel_visible}, indent=2))
+
+    def set_command_panel(self, mode: str) -> None:
+        normalized = mode.lower()
+        if normalized in {"hide", "hidden"}:
+            self.ui.command_panel_visible = False
+            self.show("Command panel hidden for this session. Use /commands show to restore it.")
+        elif normalized in {"off", "forever"}:
+            self.ui.command_panel_visible = False
+            self.save_ui_preferences()
+            self.show("Command panel hidden permanently. Use /commands show to restore it.")
+        elif normalized in {"show", "on"}:
+            self.ui.command_panel_visible = True
+            self.save_ui_preferences()
+            self.show("Command panel shown.")
+        else:
+            self.show("Usage: /commands show|hide|off")
 
     def resolve_local_path(self, path: str) -> Path:
         expanded = Path(path).expanduser()
@@ -149,7 +193,11 @@ class ChatClient:
         if not line:
             return
         if line.startswith("/"):
-            await registry.execute(self, line)
+            self.ui.executing_command = line.split(maxsplit=1)[0][1:]
+            try:
+                await registry.execute(self, line)
+            finally:
+                self.ui.executing_command = None
         else:
             await self.send_message(line)
 
@@ -161,10 +209,14 @@ class ChatClient:
                     if self._typing and time.monotonic() - self._last_input_at >= TYPING_TIMEOUT_SECONDS:
                         await self.set_typing(False)
                     continue
+                self.mark_activity()
                 if key in {"\x03", "\x04"}:  # Ctrl-C / Ctrl-D
                     await self.stop()
                     return
                 if key in {"\r", "\n"}:
+                    if self.ui.input_buffer.strip():
+                        self._input_history.append(self.ui.input_buffer)
+                    self._history_index = None
                     await self.submit_input()
                     continue
                 if key == "\t":
@@ -178,13 +230,29 @@ class ChatClient:
                         await self.set_typing(False)
                     continue
                 if key == "\x1b":  # Drop escape sequences such as arrow keys.
-                    for _ in range(2):
-                        await read_key(timeout=0.01)
+                    second = await read_key(timeout=0.01)
+                    third = await read_key(timeout=0.01)
+                    if second == "[" and third in {"A", "B"}:
+                        self.restore_input_history(up=third == "A")
                     continue
                 if key.isprintable():
                     self.ui.input_buffer += key
                     self._last_input_at = time.monotonic()
                     await self.set_typing(True)
+
+    def restore_input_history(self, up: bool) -> None:
+        if not self._input_history:
+            return
+        if self._history_index is None:
+            self._history_index = len(self._input_history)
+        self._history_index += -1 if up else 1
+        if self._history_index < 0:
+            self._history_index = 0
+        if self._history_index >= len(self._input_history):
+            self._history_index = len(self._input_history)
+            self.ui.input_buffer = ""
+            return
+        self.ui.input_buffer = self._input_history[self._history_index]
 
     async def incoming_loop(self) -> None:
         while self.running:
@@ -203,9 +271,17 @@ class ChatClient:
                 await self.notifier.message(pkt.username, text)
                 await self.ws.send(packet(PacketType.RECEIPT, self.username, message_id=pkt.id, status="read"))
             elif pkt.type == PacketType.PRESENCE:
+                statuses = dict(pkt.payload.get("statuses", {}))
                 online = [u for u in pkt.payload.get("online", []) if u != self.username]
                 self.ui.online = bool(online)
-                if online: self.ui.friend = online[0]
+                if online:
+                    self.ui.friend = online[0]
+                    self.ui.friend_status = str(statuses.get(online[0], "online"))
+                elif pkt.username != self.username and pkt.username != "server":
+                    self.ui.friend = pkt.username
+                    self.ui.friend_status = str(pkt.payload.get("status", "offline"))
+                else:
+                    self.ui.friend_status = "offline"
             elif pkt.type == PacketType.TYPING:
                 self.ui.typing = bool(pkt.payload.get("typing"))
             elif pkt.type == PacketType.COMMAND and pkt.username != self.username:
@@ -222,23 +298,35 @@ class ChatClient:
             await self.ping_once()
             await asyncio.sleep(PING_INTERVAL_SECONDS)
 
+    async def presence_loop(self) -> None:
+        while self.running:
+            status = "idle" if time.monotonic() - self._last_activity_at >= IDLE_TIMEOUT_SECONDS else "online"
+            await self.set_presence_status(status)
+            await asyncio.sleep(2)
+
     async def run(self) -> None:
         ws_task = asyncio.create_task(self.ws.run())
         with self.ui.live() as live:
             async def refresh() -> None:
                 while self.running:
+                    self.ui.tick()
                     live.update(self.ui.render())
-                    await asyncio.sleep(0.2)
-            tasks = [ws_task, asyncio.create_task(self.incoming_loop()), asyncio.create_task(self.ping_loop()), asyncio.create_task(self.input_loop()), asyncio.create_task(refresh())]
+                    await asyncio.sleep(0.08)
+            tasks = [ws_task, asyncio.create_task(self.incoming_loop()), asyncio.create_task(self.ping_loop()), asyncio.create_task(self.presence_loop()), asyncio.create_task(self.input_loop()), asyncio.create_task(refresh())]
             try:
                 await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            except KeyboardInterrupt:
+                await self.stop()
             finally:
                 await self.stop()
                 for task in tasks: task.cancel()
 
 
 def main() -> None:
-    asyncio.run(ChatClient().run())
+    try:
+        asyncio.run(ChatClient().run())
+    except KeyboardInterrupt:
+        pass
 
 
 if __name__ == "__main__":

@@ -50,6 +50,7 @@ python -m chat.client.client
 - `/ping` measures latency.
 - `/uptime` displays uptime-related status.
 - `/send FILE` uploads and shares a file.
+- `/commands show|hide|off` controls the command side panel. `off` persists the hidden preference in `~/.pychat_ui.json`.
 - `/pwd` shows the client's local working directory.
 - `/ls [DIR]` lists local files.
 - `/cd [DIR]` changes the client's local working directory used by `/send`.
@@ -61,6 +62,8 @@ python -m chat.client.client
 - `/quit` exits gracefully.
 
 Press `Tab` while typing a command to autocomplete command names and local paths for `/send`, `/ls`, and `/cd`. When either user runs a slash command, the other client receives a small system notice showing which command was used.
+
+Use the up/down arrow keys to restore previously submitted messages or commands. Presence supports `online`, `idle`, and `offline`; idle is set automatically after local inactivity while the app is still running.
 
 ## Architecture
 

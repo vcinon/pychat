@@ -15,6 +15,7 @@ class ClientLike(Protocol):
     async def ping_once(self) -> None: ...
     async def stop(self) -> None: ...
     async def notify_command(self, name: str) -> None: ...
+    def set_command_panel(self, mode: str) -> None: ...
     def change_directory(self, path: str) -> None: ...
     def list_directory(self, path: str | None = None) -> None: ...
     def print_working_directory(self) -> None: ...
@@ -79,6 +80,9 @@ class Registry:
                 return f"{parts[0]} {matches[0]}{suffix}"
         return None
 
+    def help_items(self) -> list[tuple[str, str]]:
+        return [(f"/{command.name}", command.help) for command in self.commands.values()]
+
 
 registry = Registry()
 
@@ -93,6 +97,8 @@ async def ping_cmd(client: ClientLike, args: list[str]) -> None: await client.pi
 async def uptime_cmd(client: ClientLike, args: list[str]) -> None: client.show("Uptime is tracked by the server logs.")
 @registry.register("send", "Send a file")
 async def send_cmd(client: ClientLike, args: list[str]) -> None: await client.send_file(" ".join(args)) if args else client.show("Usage: /send FILE")
+@registry.register("commands", "Show/hide command panel")
+async def commands_cmd(client: ClientLike, args: list[str]) -> None: client.set_command_panel(args[0] if args else "show")
 @registry.register("pwd", "Show local working directory")
 async def pwd_cmd(client: ClientLike, args: list[str]) -> None: client.print_working_directory()
 @registry.register("ls", "List local files")
