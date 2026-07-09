@@ -1,0 +1,23 @@
+[Unit]
+Description=PyChat client (Textual TUI, running in a detached tmux session)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=forking
+WorkingDirectory=__INSTALL_DIR__
+Environment=PYCHAT_TMUX_SESSION=__SESSION_NAME__
+# `chat-service` is the helper installed alongside this unit; it starts the
+# TUI inside a detached tmux session (so systemd, which has no terminal, can
+# still supervise a process that needs one -- see chat/client/service.py).
+ExecStart=__PYTHON__ -m chat.client.service start
+ExecStop=__PYTHON__ -m chat.client.service stop
+ExecReload=__PYTHON__ -m chat.client.service restart
+Restart=on-failure
+RestartSec=5
+# tmux keeps running after its parent exits, which is what "forking" expects;
+# PIDFile lets systemd track the real client process rather than tmux itself.
+PIDFile=__RUNTIME_DIR__/pychat-client.pid
+
+[Install]
+WantedBy=default.target

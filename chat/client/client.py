@@ -22,6 +22,7 @@ from dotenv import load_dotenv
 from chat.client.commands import registry
 from chat.client.crypto import MessageCrypto
 from chat.client.file_transfer import download, upload
+from chat.client.images import is_image_path
 from chat.client.notifications import Notifier
 from chat.client.ping import PingTracker
 from chat.client.websocket import WebSocketClient
@@ -38,6 +39,7 @@ class UIPort(Protocol):
     """Everything the client needs to render itself, implemented by the UI."""
 
     def add_message(self, sender: str, text: str, status: str = "") -> None: ...
+    def add_image(self, sender: str, path: Path, caption: str = "") -> None: ...
     def clear_messages(self) -> None: ...
     def set_friend_typing(self, typing: bool) -> None: ...
     def set_friend(self, name: str) -> None: ...
@@ -175,6 +177,16 @@ class ChatClient:
         self.ping.sent(pkt.id)
         await self.ws.send(pkt)
 
+    def view_image(self, path: str) -> None:
+        source = self.resolve_local_path(path)
+        if not source.is_file():
+            self.show(f"Not a file: {source}")
+            return
+        if not is_image_path(source):
+            self.show(f"Not a recognized image type: {source.name}")
+            return
+        self.ui.add_image("You", source, source.name)
+
     async def send_file(self, path: str) -> None:
         try:
             source = self.resolve_local_path(path)
@@ -187,7 +199,10 @@ class ChatClient:
                 result = await upload(self.http_server, self.password, self.username, source, on_progress)
             finally:
                 self.ui.finish_transfer()
-            self.show(f"Sent file {result['filename']} ({result['size']} bytes)")
+            if is_image_path(source):
+                self.ui.add_image("You", source, f"Sent {result['filename']} ({result['size']} bytes)")
+            else:
+                self.show(f"Sent file {result['filename']} ({result['size']} bytes)")
         except Exception as exc:
             self.ui.finish_transfer()
             self.show(f"File send failed: {exc}")
@@ -291,7 +306,10 @@ class ChatClient:
                     )
                 finally:
                     self.ui.finish_transfer()
-                self.show(f"Downloaded file to {saved}")
+                if is_image_path(saved):
+                    self.ui.add_image(pkt.username, saved, f"Sent {filename}")
+                else:
+                    self.show(f"Downloaded file to {saved}")
 
     async def ping_loop(self) -> None:
         while self.running:

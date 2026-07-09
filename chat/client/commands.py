@@ -12,6 +12,7 @@ from typing import Protocol
 class ClientLike(Protocol):
     async def request_history(self, limit: int = 100) -> None: ...
     async def send_file(self, path: str) -> None: ...
+    def view_image(self, path: str) -> None: ...
     async def ping_once(self) -> None: ...
     async def stop(self) -> None: ...
     async def notify_command(self, name: str) -> None: ...
@@ -70,7 +71,7 @@ class Registry:
                 return matches[0] + " "
             return None
         command = parts[0][1:]
-        if command in {"send", "ls", "cd"}:
+        if command in {"send", "ls", "cd", "img"}:
             token = "" if line.endswith(" ") else parts[-1]
             raw_path = Path(token).expanduser()
             parent = raw_path.parent if raw_path.parent != Path(".") else Path.cwd()
@@ -98,6 +99,8 @@ async def ping_cmd(client: ClientLike, args: list[str]) -> None: await client.pi
 async def uptime_cmd(client: ClientLike, args: list[str]) -> None: client.show("Uptime is tracked by the server logs.")
 @registry.register("send", "Send a file")
 async def send_cmd(client: ClientLike, args: list[str]) -> None: await client.send_file(" ".join(args)) if args else client.show("Usage: /send FILE")
+@registry.register("img", "Preview a local image inline")
+async def img_cmd(client: ClientLike, args: list[str]) -> None: client.view_image(" ".join(args)) if args else client.show("Usage: /img FILE")
 @registry.register("commands", "Show/hide command panel")
 async def commands_cmd(client: ClientLike, args: list[str]) -> None: client.set_command_panel(args[0] if args else "show")
 @registry.register("pwd", "Show local working directory")
@@ -113,7 +116,9 @@ async def clear_cmd(client: ClientLike, args: list[str]) -> None: client.clear_s
 @registry.register("online", "Show online users")
 async def online_cmd(client: ClientLike, args: list[str]) -> None: client.show("Presence is displayed in the header.")
 @registry.register("status", "Show status")
-async def status_cmd(client: ClientLike, args: list[str]) -> None: client.show("Client running.")
+async def status_cmd(client: ClientLike, args: list[str]) -> None:
+    from chat.client.images import image_support_status
+    client.show(f"Client running. {image_support_status()}")
 @registry.register("version", "Show version")
 async def version_cmd(client: ClientLike, args: list[str]) -> None:
     from chat.shared.constants import VERSION

@@ -8,6 +8,8 @@ implementing the ``UIPort`` protocol it defines.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -19,6 +21,8 @@ from textual.widgets import Footer, Input, Label, ProgressBar, Static
 
 from chat.client.client import ChatClient
 from chat.client.commands import registry
+from chat.client.formatting import format_message
+from chat.client.images import ImagePreview, is_image_path
 from chat.shared.constants import APP_NAME, TYPING_TIMEOUT_SECONDS
 
 # Colors mirrored from the original Rich UI's OPENCLAW palette.
@@ -67,6 +71,14 @@ class StatusBar(Static):
 class MessageLog(VerticalScroll):
     """Scrollable chat history."""
 
+    # Colors handed to the formatter so links/code match the app theme.
+    _FORMAT_COLORS = {
+        "link": COLORS["quote"],
+        "code_fg": COLORS["accent"],
+        "code_bg": "#2A2E37",
+        "code_border": COLORS["border"],
+    }
+
     def add_message(self, sender: str, text: str, status: str = "") -> None:
         if sender == "System":
             sender_color = COLORS["system"]
@@ -74,11 +86,23 @@ class MessageLog(VerticalScroll):
             sender_color = COLORS["accent"]
         else:
             sender_color = COLORS["quote"]
-        markup = f"[bold {sender_color}]{escape(sender)}:[/] [{COLORS['text']}]{escape(text)}[/]"
+
+        formatted = format_message(text, self._FORMAT_COLORS)
+        markup = f"[bold {sender_color}]{escape(sender)}:[/] {formatted.markup}"
         if status:
             markup += f" [{COLORS['dim']}]{escape(status)}[/]"
         was_at_bottom = self._is_scrolled_to_end()
         self.mount(Static(markup, classes="message"))
+        self._trim()
+        if was_at_bottom:
+            self.scroll_end(animate=False)
+
+    def add_image(self, sender: str, path: Path, caption: str = "") -> None:
+        """Add an inline image preview to the chat log."""
+        sender_color = COLORS["accent"] if sender == "You" else COLORS["quote"]
+        label = f"[bold {sender_color}]{escape(sender)}:[/] {escape(caption or path.name)}"
+        was_at_bottom = self._is_scrolled_to_end()
+        self.mount(ImagePreview(path, label, classes="message"))
         self._trim()
         if was_at_bottom:
             self.scroll_end(animate=False)
@@ -276,6 +300,9 @@ class ChatApp(App[None]):
 
     def add_message(self, sender: str, text: str, status: str = "") -> None:
         self.query_one(MessageLog).add_message(sender, text, status)
+
+    def add_image(self, sender: str, path: Path, caption: str = "") -> None:
+        self.query_one(MessageLog).add_image(sender, path, caption)
 
     def clear_messages(self) -> None:
         self.query_one(MessageLog).clear_messages()
