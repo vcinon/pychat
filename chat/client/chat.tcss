@@ -1,0 +1,99 @@
+/* Textual stylesheet for the chat client.
+   Colors mirror the original OPENCLAW palette used by the Rich UI. */
+
+Screen {
+    background: #1B1E24;
+    color: #E8E3D5;
+}
+
+#status-bar {
+    dock: top;
+    height: 3;
+    padding: 0 1;
+    background: #22262E;
+    color: #E8E3D5;
+    border-bottom: solid #3C414B;
+}
+
+#body {
+    height: 1fr;
+}
+
+#chat-pane {
+    width: 1fr;
+    height: 1fr;
+}
+
+#message-log {
+    width: 1fr;
+    height: 1fr;
+    padding: 0 1;
+    background: #1B1E24;
+    scrollbar-color: #3C414B;
+    scrollbar-color-hover: #F6C453;
+    scrollbar-color-active: #F6C453;
+}
+
+#message-log .message {
+    padding: 0 0 1 0;
+    width: 1fr;
+}
+
+#activity-indicator {
+    height: auto;
+    min-height: 0;
+    padding: 0 1;
+    color: #F2A65A;
+    text-style: italic;
+}
+
+#transfer-panel {
+    height: auto;
+    padding: 0 1;
+    background: #22262E;
+}
+
+#transfer-panel Label {
+    width: auto;
+    padding: 0 1 0 0;
+    color: #7B7F87;
+}
+
+#transfer-panel ProgressBar {
+    width: 1fr;
+}
+
+#commands-panel {
+    width: 32;
+    height: 1fr;
+    padding: 1;
+    background: #22262E;
+    border-left: solid #3C414B;
+}
+
+#commands-panel .command-row {
+    height: auto;
+    width: 1fr;
+}
+
+#commands-panel .command-hint {
+    height: auto;
+    width: 1fr;
+    color: #7B7F87;
+    padding-top: 1;
+}
+
+.hidden {
+    display: none;
+}
+
+#message-input {
+    height: 3;
+    border: heavy #3C414B;
+    background: #22262E;
+    color: #E8E3D5;
+}
+
+#message-input:focus {
+    border: heavy #F6C453;
+}

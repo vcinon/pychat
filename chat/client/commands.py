@@ -20,6 +20,7 @@ class ClientLike(Protocol):
     def list_directory(self, path: str | None = None) -> None: ...
     def print_working_directory(self) -> None: ...
     def show(self, message: str) -> None: ...
+    def clear_screen(self) -> None: ...
 
 Handler = Callable[[ClientLike, list[str]], Awaitable[None]]
 
@@ -108,7 +109,7 @@ async def cd_cmd(client: ClientLike, args: list[str]) -> None: client.change_dir
 @registry.register("history", "Load history")
 async def history_cmd(client: ClientLike, args: list[str]) -> None: await client.request_history(int(args[0]) if args else 100)
 @registry.register("clear", "Clear screen")
-async def clear_cmd(client: ClientLike, args: list[str]) -> None: client.show("Clear by restarting the live view.")
+async def clear_cmd(client: ClientLike, args: list[str]) -> None: client.clear_screen()
 @registry.register("online", "Show online users")
 async def online_cmd(client: ClientLike, args: list[str]) -> None: client.show("Presence is displayed in the header.")
 @registry.register("status", "Show status")

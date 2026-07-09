@@ -18,7 +18,7 @@ Edit `.env` on both machines. `PASSWORD` must match. Each user should set their 
 ## Configuration
 
 ```env
-USERNAME=Yassin
+USERNAME=user
 PASSWORD=super_secret
 SERVER=ws://127.0.0.1:8000/ws
 HTTP_SERVER=http://127.0.0.1:8000
