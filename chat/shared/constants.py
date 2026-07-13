@@ -1,7 +1,7 @@
 """Shared constants for the chat protocol."""
 
 APP_NAME = "Private Chat"
-VERSION = "1.0.0"
+VERSION = "1.4.1"
 PACKET_VERSION = 1
 HEARTBEAT_INTERVAL_SECONDS = 15.0
 PING_INTERVAL_SECONDS = 10.0

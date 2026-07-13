@@ -62,11 +62,15 @@ class ChatClient:
         self.username = os.environ["USERNAME"]
         self.password = os.environ["PASSWORD"]
         self.server = os.getenv("SERVER", "ws://127.0.0.1:8000/ws")
-        self.http_server = os.getenv("HTTP_SERVER", self.server.replace("ws://", "http://").replace("/ws", ""))
+        self.http_server = os.getenv(
+            "HTTP_SERVER", self.server.replace("ws://", "http://").replace("/ws", "")
+        )
         self.download_dir = os.getenv("DOWNLOAD_DIR", "chat/client/downloads")
         self.crypto = MessageCrypto(self.password)
         self.incoming: asyncio.Queue[Packet] = asyncio.Queue()
-        self.ws = WebSocketClient(self.server, self.username, self.password, self.incoming)
+        self.ws = WebSocketClient(
+            self.server, self.username, self.password, self.incoming
+        )
         self.notifier = Notifier(os.getenv("NOTIFICATIONS", "true").lower() == "true")
         self.ping = PingTracker()
         self.running = True
@@ -111,19 +115,25 @@ class ChatClient:
         self.command_panel_visible = bool(data.get("command_panel_visible", True))
 
     def save_ui_preferences(self) -> None:
-        self.ui_config_path.write_text(json.dumps({"command_panel_visible": self.command_panel_visible}, indent=2))
+        self.ui_config_path.write_text(
+            json.dumps({"command_panel_visible": self.command_panel_visible}, indent=2)
+        )
 
     def set_command_panel(self, mode: str) -> None:
         normalized = mode.lower()
         if normalized in {"hide", "hidden"}:
             self.command_panel_visible = False
             self.ui.set_command_panel_visible(False)
-            self.show("Command panel hidden for this session. Use /commands show to restore it.")
+            self.show(
+                "Command panel hidden for this session. Use /commands show to restore it."
+            )
         elif normalized in {"off", "forever"}:
             self.command_panel_visible = False
             self.ui.set_command_panel_visible(False)
             self.save_ui_preferences()
-            self.show("Command panel hidden permanently. Use /commands show to restore it.")
+            self.show(
+                "Command panel hidden permanently. Use /commands show to restore it."
+            )
         elif normalized in {"show", "on"}:
             self.command_panel_visible = True
             self.ui.set_command_panel_visible(True)
@@ -146,8 +156,15 @@ class ChatClient:
         if not directory.is_dir():
             self.show(f"Not a directory: {directory}")
             return
-        entries = sorted(directory.iterdir(), key=lambda item: (not item.is_dir(), item.name.lower()))
-        rendered = "  ".join(f"{entry.name}/" if entry.is_dir() else entry.name for entry in entries) or "<empty>"
+        entries = sorted(
+            directory.iterdir(), key=lambda item: (not item.is_dir(), item.name.lower())
+        )
+        rendered = (
+            "  ".join(
+                f"{entry.name}/" if entry.is_dir() else entry.name for entry in entries
+            )
+            or "<empty>"
+        )
         self.show(rendered)
 
     def change_directory(self, path: str) -> None:
@@ -170,7 +187,9 @@ class ChatClient:
         self.ui.request_exit()
 
     async def request_history(self, limit: int = 100) -> None:
-        await self.ws.send(packet(PacketType.HISTORY_REQUEST, self.username, limit=limit))
+        await self.ws.send(
+            packet(PacketType.HISTORY_REQUEST, self.username, limit=limit)
+        )
 
     async def ping_once(self) -> None:
         pkt = packet(PacketType.PING, self.username)
@@ -194,13 +213,20 @@ class ChatClient:
             def on_progress(current: int, total: int | None) -> None:
                 self.ui.progress_transfer(current, total)
 
-            self.ui.start_transfer(f"Uploading {source.name}", source.stat().st_size if source.is_file() else None)
+            self.ui.start_transfer(
+                f"Uploading {source.name}",
+                source.stat().st_size if source.is_file() else None,
+            )
             try:
-                result = await upload(self.http_server, self.password, self.username, source, on_progress)
+                result = await upload(
+                    self.http_server, self.password, self.username, source, on_progress
+                )
             finally:
                 self.ui.finish_transfer()
             if is_image_path(source):
-                self.ui.add_image("You", source, f"Sent {result['filename']} ({result['size']} bytes)")
+                self.ui.add_image(
+                    "You", source, f"Sent {result['filename']} ({result['size']} bytes)"
+                )
             else:
                 self.show(f"Sent file {result['filename']} ({result['size']} bytes)")
         except Exception as exc:
@@ -210,7 +236,7 @@ class ChatClient:
     async def send_message(self, text: str) -> None:
         encrypted = self.crypto.encrypt(text)
         pkt = packet(PacketType.MESSAGE, self.username, encrypted_message=encrypted)
-        self.ui.add_message("You", text, "✓ Sent")
+        self.ui.add_message("You", text, "✓")
         await self.ws.send(pkt)
 
     async def set_typing(self, typing: bool) -> None:
@@ -267,15 +293,26 @@ class ChatClient:
                         text = self.crypto.decrypt(msg["encrypted_message"])
                     except Exception:
                         text = "<unable to decrypt>"
-                    self.ui.add_message("You" if msg["sender"] == self.username else msg["sender"], text)
+                    self.ui.add_message(
+                        "You" if msg["sender"] == self.username else msg["sender"], text
+                    )
             elif pkt.type == PacketType.MESSAGE and pkt.username != self.username:
                 text = self.crypto.decrypt(str(pkt.payload["encrypted_message"]))
                 self.ui.add_message(pkt.username, text)
                 await self.notifier.message(pkt.username, text)
-                await self.ws.send(packet(PacketType.RECEIPT, self.username, message_id=pkt.id, status="read"))
+                await self.ws.send(
+                    packet(
+                        PacketType.RECEIPT,
+                        self.username,
+                        message_id=pkt.id,
+                        status="read",
+                    )
+                )
             elif pkt.type == PacketType.PRESENCE:
                 statuses = dict(pkt.payload.get("statuses", {}))
-                online = [u for u in pkt.payload.get("online", []) if u != self.username]
+                online = [
+                    u for u in pkt.payload.get("online", []) if u != self.username
+                ]
                 self.ui.set_online(bool(online))
                 if online:
                     self.ui.set_friend(online[0])
@@ -288,12 +325,17 @@ class ChatClient:
             elif pkt.type == PacketType.TYPING:
                 self.ui.set_friend_typing(bool(pkt.payload.get("typing")))
             elif pkt.type == PacketType.COMMAND and pkt.username != self.username:
-                self.show(f"{pkt.username} used /{pkt.payload.get('command', 'unknown')}")
+                self.show(
+                    f"{pkt.username} used /{pkt.payload.get('command', 'unknown')}"
+                )
             elif pkt.type == PacketType.PONG:
                 ms = self.ping.received(str(pkt.payload.get("echo")))
                 if ms is not None:
                     self.ui.set_ping(ms)
-            elif pkt.type == PacketType.FILE and pkt.payload.get("sender") != self.username:
+            elif (
+                pkt.type == PacketType.FILE
+                and pkt.payload.get("sender") != self.username
+            ):
                 filename = str(pkt.payload["filename"])
 
                 def on_progress(current: int, total: int | None) -> None:
@@ -302,7 +344,11 @@ class ChatClient:
                 self.ui.start_transfer(f"Downloading {filename}", None)
                 try:
                     saved = await download(
-                        self.http_server, str(pkt.payload["id"]), filename, self.download_dir, on_progress
+                        self.http_server,
+                        str(pkt.payload["id"]),
+                        filename,
+                        self.download_dir,
+                        on_progress,
                     )
                 finally:
                     self.ui.finish_transfer()
@@ -318,7 +364,11 @@ class ChatClient:
 
     async def presence_loop(self) -> None:
         while self.running:
-            status = "idle" if time.monotonic() - self._last_activity_at >= IDLE_TIMEOUT_SECONDS else "online"
+            status = (
+                "idle"
+                if time.monotonic() - self._last_activity_at >= IDLE_TIMEOUT_SECONDS
+                else "online"
+            )
             await self.set_presence_status(status)
             await asyncio.sleep(2)
 

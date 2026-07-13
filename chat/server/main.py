@@ -8,6 +8,8 @@ from uuid import uuid4
 import aiofiles
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile, WebSocket
 from fastapi.responses import FileResponse
+from fastapi import UploadFile, File, Form, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 
 from chat.shared.packet import PacketType
 from chat.shared.protocol import packet
@@ -22,6 +24,17 @@ logger = configure_logging("chat.server", config.log_level)
 db = Database(config.database_path)
 manager = ConnectionManager(db, config.password)
 app = FastAPI(title="Private Chat", version="1.0.0")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "tauri://localhost",
+        "http://localhost:1420",
+        "http://127.0.0.1:1420",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.on_event("startup")
